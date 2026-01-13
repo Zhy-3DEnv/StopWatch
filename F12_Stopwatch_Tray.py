@@ -12,11 +12,9 @@ import os
 # 配置
 # ======================
 CONFIG_FILE = "hud_config.json"
-HOTKEY_TOGGLE = "F12"
-HOTKEY_RESET = "F11"       # 只重置秒表时间
-HOTKEY_RECORD = "F10"      # 记录当前时间
-HOTKEY_RESET_ALL = "F9"    # 重置秒表 + 记录
-HOTKEY_TOGGLE_HUD = "F8"   # 显示/隐藏 HUD
+HOTKEY_TOGGLE = "F12"      # 切换秒表开始/停止
+HOTKEY_RESET = "F11"       # 单击：重置秒表；双击：重置秒表和记录
+HOTKEY_RECORD = "F10"      # 单击：记录时间；双击：显示/隐藏HUD
 HOTKEY_ZOOM_OUT = "-"      # 缩小界面
 HOTKEY_ZOOM_IN = "plus"    # 放大界面（+键）
 
@@ -45,6 +43,12 @@ bg_cache = {}
 
 # 是否正在拖拽 HUD，用于在拖拽时减轻重绘负担
 is_dragging = False
+
+# 双击检测：记录按键时间和延迟执行的Timer
+key_timers = {}  # key -> threading.Timer对象
+key_last_press = {}  # key -> 最后按下时间
+DOUBLE_CLICK_DELAY = 0.3  # 双击间隔300ms
+SINGLE_CLICK_DELAY = 0.35  # 单击延迟执行时间350ms
 
 # ======================
 # 配置读写
@@ -131,6 +135,7 @@ def reset_timer():
     except Exception as e:
         print(f"Error in reset_timer: {e}")
 
+
 def zoom_in():
     """放大界面"""
     try:
@@ -145,6 +150,7 @@ def zoom_in():
         root.after(0, update_records_display)
     except Exception as e:
         print(f"Error in zoom_in: {e}")
+
 
 def zoom_out():
     """缩小界面"""
@@ -166,7 +172,8 @@ def recalc_main_fixed_size():
     """根据当前配置和缩放，重新计算主秒表固定宽高"""
     global fixed_width, fixed_height
     font_size = int(DEFAULT_FONT_SIZE * zoom_scale)
-    max_time_text = "99:59.999" if config.get("show_milliseconds", False) else "99:59"
+    max_time_text = "99:59.999" if config.get(
+        "show_milliseconds", False) else "99:59"
     max_img = create_text_image(max_time_text, font_size=font_size)
     fixed_width = max_img.width
     fixed_height = max_img.height
@@ -244,7 +251,7 @@ def draw_rounded_rectangle_smooth(xy, fill, radius=10):
         for x in range(large_width):
             # 检查是否在矩形主体内（不在圆角区域）
             in_rect = (x >= large_radius and x < large_width - large_radius) or \
-                     (y >= large_radius and y < large_height - large_radius)
+                (y >= large_radius and y < large_height - large_radius)
 
             if in_rect:
                 # 在矩形主体内，完全不透明
@@ -271,7 +278,8 @@ def draw_rounded_rectangle_smooth(xy, fill, radius=10):
                     # 使用更平滑的过渡函数（改进的smoothstep）
                     t = min_dist / edge_width
                     # 使用更平滑的曲线：smoothstep的改进版本
-                    t = t * t * t * (t * (t * 6 - 15) + 10)  # smootherstep函数，更平滑
+                    # smootherstep函数，更平滑
+                    t = t * t * t * (t * (t * 6 - 15) + 10)
                     pixel_alpha = int(alpha * (1 - t))
                 else:
                     # 在圆角外部，完全透明
@@ -285,6 +293,7 @@ def draw_rounded_rectangle_smooth(xy, fill, radius=10):
     # 写入缓存
     bg_cache[key] = final_img
     return final_img
+
 
 def create_text_image(text, font_size=48, align="left", target_width=None, target_height=None):
     """使用 PIL 创建文字图像，获得更好的抗锯齿效果
@@ -358,15 +367,16 @@ def create_text_image(text, font_size=48, align="left", target_width=None, targe
         img_height = text_height + padding * 2
     radius = 8
     bg_color = (26, 26, 26, 255)
-    
+
     # 使用背景：拖拽时用简单矩形以提升性能，非拖拽时用圆角抗锯齿
     if is_dragging:
         # 简单矩形背景（无圆角），性能更好
         bg_img = Image.new("RGBA", (img_width, img_height), bg_color)
     else:
         # 使用超采样绘制平滑的圆角矩形背景（带缓存）
-        bg_img = draw_rounded_rectangle_smooth((0, 0, img_width - 1, img_height - 1), fill=bg_color, radius=radius)
-    
+        bg_img = draw_rounded_rectangle_smooth(
+            (0, 0, img_width - 1, img_height - 1), fill=bg_color, radius=radius)
+
     # 创建主图像并粘贴背景
     img = Image.new("RGBA", (img_width, img_height), (0, 0, 0, 0))
     img.paste(bg_img, (0, 0), bg_img)  # 使用alpha通道合成
@@ -382,7 +392,7 @@ def create_text_image(text, font_size=48, align="left", target_width=None, targe
                 # 计算文本宽度以确定x位置
                 line_bbox = temp_draw.textbbox((0, 0), line, font=font)
                 line_width = line_bbox[2] - line_bbox[0]
-                
+
                 if align == "center":
                     text_x = (img_width - line_width) // 2
                     anchor = "lt"
@@ -392,8 +402,9 @@ def create_text_image(text, font_size=48, align="left", target_width=None, targe
                 else:  # left
                     text_x = padding
                     anchor = "lt"
-                
-                draw.text((text_x, y_offset), line, fill=(0, 255, 170, 255), font=font, anchor=anchor)
+
+                draw.text((text_x, y_offset), line, fill=(
+                    0, 255, 170, 255), font=font, anchor=anchor)
                 # 计算下一行的位置
                 bbox = temp_draw.textbbox((0, 0), line, font=font)
                 y_offset += (bbox[3] - bbox[1]) + 5  # 行高 + 间距
@@ -408,7 +419,8 @@ def create_text_image(text, font_size=48, align="left", target_width=None, targe
         else:  # left
             text_x = padding
             anchor = "lt"
-        draw.text((text_x, text_y), text, fill=(0, 255, 170, 255), font=font, anchor=anchor)
+        draw.text((text_x, text_y), text, fill=(
+            0, 255, 170, 255), font=font, anchor=anchor)
 
     return img
 
@@ -463,9 +475,10 @@ def update_records_display():
     if fixed_width is None or fixed_height is None:
         recalc_main_fixed_size()
     target_width = fixed_width
-    
+
     # 使用居中对齐，并指定目标宽度
-    img = create_text_image(records_text, font_size=record_font_size, align="center", target_width=target_width)
+    img = create_text_image(records_text, font_size=record_font_size,
+                            align="center", target_width=target_width)
     photo = ImageTk.PhotoImage(img)
     records_label.config(image=photo)
     records_label.image = photo  # 保持引用
@@ -477,9 +490,9 @@ def update_loop():
         elapsed = time.time() - start_time
         # 拖拽时也保持更新显示（已通过缓存和优化降低重绘开销）
         update_label()
-    # 拖拽时降低更新频率到20fps（50ms），非拖拽时使用更高频率（30ms约33fps）
+    # 拖拽时降低更新频率到10fps（100ms），非拖拽时使用更高频率（30ms约33fps）
     if is_dragging:
-        root.after(50, update_loop)  # 拖拽时20fps
+        root.after(100, update_loop)  # 拖拽时10fps
     else:
         root.after(30, update_loop)  # 非拖拽时约33fps
 
@@ -503,13 +516,15 @@ def toggle_hud():
 # HUD 拖拽和右键菜单
 # ======================
 
+
 def show_context_menu(event):
     """显示右键菜单"""
-    context_menu = tk.Menu(root, tearoff=0, bg="#2a2a2a", fg="#ffffff", 
-                          activebackground="#00FFAA", activeforeground="#000000")
-    
-    format_text = "显示毫秒" if not config.get("show_milliseconds", False) else "隐藏毫秒"
-    
+    context_menu = tk.Menu(root, tearoff=0, bg="#2a2a2a", fg="#ffffff",
+                           activebackground="#00FFAA", activeforeground="#000000")
+
+    format_text = "显示毫秒" if not config.get(
+        "show_milliseconds", False) else "隐藏毫秒"
+
     context_menu.add_command(label="显示 / 隐藏 HUD", command=toggle_hud)
     context_menu.add_separator()
     context_menu.add_command(label=format_text, command=toggle_time_format)
@@ -518,11 +533,12 @@ def show_context_menu(event):
     context_menu.add_command(label="重置全部（含记录）", command=reset_all)
     context_menu.add_separator()
     context_menu.add_command(label="退出", command=on_exit)
-    
+
     try:
         context_menu.tk_popup(event.x_root, event.y_root)
     finally:
         context_menu.grab_release()
+
 
 def start_drag(event):
     global is_dragging
@@ -549,22 +565,68 @@ def stop_drag(event):
 # ======================
 
 
+def handle_f11_press():
+    """处理F11按键：单击重置秒表，双击重置秒表和记录"""
+    global key_timers, key_last_press
+    current_time = time.time()
+    last_time = key_last_press.get("F11", 0)
+    
+    # 取消之前的Timer（如果存在）
+    if "F11" in key_timers:
+        key_timers["F11"].cancel()
+        del key_timers["F11"]
+    
+    # 检查是否是双击（300ms内）
+    if current_time - last_time < DOUBLE_CLICK_DELAY:
+        # 双击：重置秒表和记录
+        key_last_press["F11"] = 0  # 重置，避免连续三次按键被误判
+        root.after(0, reset_all)
+    else:
+        # 可能是单击，延迟执行
+        key_last_press["F11"] = current_time
+        timer = threading.Timer(SINGLE_CLICK_DELAY, lambda: root.after(0, reset_timer))
+        key_timers["F11"] = timer
+        timer.start()
+
+
+def handle_f10_press():
+    """处理F10按键：单击记录时间，双击显示/隐藏HUD"""
+    global key_timers, key_last_press
+    current_time = time.time()
+    last_time = key_last_press.get("F10", 0)
+    
+    # 取消之前的Timer（如果存在）
+    if "F10" in key_timers:
+        key_timers["F10"].cancel()
+        del key_timers["F10"]
+    
+    # 检查是否是双击（300ms内）
+    if current_time - last_time < DOUBLE_CLICK_DELAY:
+        # 双击：显示/隐藏HUD
+        key_last_press["F10"] = 0  # 重置，避免连续三次按键被误判
+        root.after(0, toggle_hud)
+    else:
+        # 可能是单击，延迟执行
+        key_last_press["F10"] = current_time
+        timer = threading.Timer(SINGLE_CLICK_DELAY, lambda: root.after(0, record_time))
+        key_timers["F10"] = timer
+        timer.start()
+
+
 def keyboard_listener():
     """键盘监听器，带自动重启机制"""
     while True:
         try:
             # 清除之前的热键（如果存在）
             keyboard.unhook_all()
-            
+
             # 重新注册所有热键
             keyboard.add_hotkey(HOTKEY_TOGGLE, toggle_timer)
-            keyboard.add_hotkey(HOTKEY_RESET, reset_timer)
-            keyboard.add_hotkey(HOTKEY_RECORD, record_time)
-            keyboard.add_hotkey(HOTKEY_RESET_ALL, reset_all)
-            keyboard.add_hotkey(HOTKEY_TOGGLE_HUD, toggle_hud)
+            keyboard.add_hotkey(HOTKEY_RESET, handle_f11_press)  # F11：单击重置秒表，双击重置全部
+            keyboard.add_hotkey(HOTKEY_RECORD, handle_f10_press)  # F10：单击记录时间，双击显示/隐藏HUD
             keyboard.add_hotkey(HOTKEY_ZOOM_IN, zoom_in)
             keyboard.add_hotkey(HOTKEY_ZOOM_OUT, zoom_out)
-            
+
             # 使用wait()阻塞，但如果出现问题会抛出异常
             keyboard.wait()
         except Exception as e:
@@ -655,11 +717,13 @@ main_frame.pack(fill=tk.BOTH, expand=True, anchor="w")  # 左对齐
 # 创建初始图像（使用缩放后的字体大小）
 initial_font_size = int(DEFAULT_FONT_SIZE * zoom_scale)
 # 计算最大可能的时间，用于固定背景宽度和高度
-max_time_text = "99:59.999" if config.get("show_milliseconds", False) else "99:59"
+max_time_text = "99:59.999" if config.get(
+    "show_milliseconds", False) else "99:59"
 max_img = create_text_image(max_time_text, font_size=initial_font_size)
 fixed_width = max_img.width
 fixed_height = max_img.height
-initial_img = create_text_image(format_time(0), font_size=initial_font_size, target_width=fixed_width, target_height=fixed_height, align="center")
+initial_img = create_text_image(format_time(0), font_size=initial_font_size,
+                                target_width=fixed_width, target_height=fixed_height, align="center")
 initial_photo = ImageTk.PhotoImage(initial_img)
 
 label = tk.Label(
