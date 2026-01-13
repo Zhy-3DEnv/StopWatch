@@ -1,6 +1,7 @@
 import time
 import threading
 import tkinter as tk
+from tkinter import simpledialog
 import keyboard
 import pystray
 from pystray import MenuItem as item
@@ -12,15 +13,16 @@ import os
 # 配置
 # ======================
 CONFIG_FILE = "hud_config.json"
-HOTKEY_TOGGLE = "F12"      # 切换秒表开始/停止
-HOTKEY_RESET = "F11"       # 单击：重置秒表；双击：重置秒表和记录
-HOTKEY_RECORD = "F10"      # 单击：记录时间；双击：显示/隐藏HUD
-HOTKEY_ZOOM_OUT = "-"      # 缩小界面
-HOTKEY_ZOOM_IN = "plus"    # 放大界面（+键）
+HOTKEY_TOGGLE = "F12"        # 切换秒表开始/停止
+HOTKEY_RESET = "F11"         # 单击：重置秒表；双击：重置秒表和记录
+HOTKEY_RECORD = "F10"        # 单击：记录时间；双击：显示/隐藏HUD
+HOTKEY_EDIT_NOTE = "F7"      # 为最近一次记录添加/编辑说明
+HOTKEY_ZOOM_OUT = "-"        # 缩小界面
+HOTKEY_ZOOM_IN = "plus"      # 放大界面（+键）
 
 # 默认字体大小
 DEFAULT_FONT_SIZE = 48
-DEFAULT_RECORD_FONT_SIZE = 24
+DEFAULT_RECORD_FONT_SIZE = 36
 
 # ======================
 # 状态
@@ -29,6 +31,7 @@ running = False
 start_time = 0.0
 elapsed = 0.0
 laps = []
+# 记录结构：{"time": float, "note": str}
 records = []  # 记录的时间列表
 hud_visible = True   # 启动时默认显示
 zoom_scale = 1.0     # 缩放比例，默认1.0，范围0.5-2.0
@@ -43,6 +46,9 @@ bg_cache = {}
 
 # 是否正在拖拽 HUD，用于在拖拽时减轻重绘负担
 is_dragging = False
+
+# 当前记录区域中“可见的记录”在 records 列表中的下标，供右键精确定位
+visible_record_indices = []
 
 # 双击检测：记录按键时间和延迟执行的Timer
 key_timers = {}  # key -> threading.Timer对象
@@ -112,10 +118,10 @@ def record_lap():
 
 
 def record_time():
-    """记录当前时间"""
+    """记录当前时间（新增一条记录，可后续添加备注）"""
     try:
         global records
-        records.append(elapsed)
+        records.append({"time": elapsed, "note": ""})
         # 使用 root.after 确保在主线程中更新 UI
         root.after(0, update_records_display)
     except Exception as e:
@@ -182,11 +188,12 @@ def recalc_main_fixed_size():
 def reset_all():
     """重置秒表时间 + 记录"""
     try:
-        global running, elapsed, start_time, laps, records
+        global running, elapsed, start_time, laps, records, last_display_text
         running = False
         elapsed = 0.0
         laps.clear()
         records.clear()
+        last_display_text = None
         start_time = time.time()
         # 使用 root.after 确保在主线程中更新 UI
         root.after(0, update_label)
@@ -305,9 +312,16 @@ def create_text_image(text, font_size=48, align="left", target_width=None, targe
     temp_img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
     temp_draw = ImageDraw.Draw(temp_img)
 
-    # 尝试加载 Consolas 字体（Windows 系统字体）
+    # 尝试加载支持中文的字体（优先微软雅黑等）
     font = None
     font_paths = [
+        # 常见中文字体（简体中文 Windows 下一般存在）
+        "C:/Windows/Fonts/msyh.ttc",      # 微软雅黑
+        "C:/Windows/Fonts/msyh.ttf",
+        "C:/Windows/Fonts/msyhbd.ttc",    # 微软雅黑加粗
+        "C:/Windows/Fonts/simhei.ttf",    # 黑体
+        "C:/Windows/Fonts/simsun.ttc",    # 宋体
+        # 退回到原来的英文字体作为兜底
         "C:/Windows/Fonts/consola.ttf",
         "C:/Windows/Fonts/consolab.ttf",
         "consola.ttf",
@@ -456,29 +470,54 @@ def update_label():
 
 def update_records_display():
     """更新记录显示"""
+    global visible_record_indices
+
     if not records:
         # 创建一个空的透明图像
         empty_img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
         empty_photo = ImageTk.PhotoImage(empty_img)
         records_label.config(image=empty_photo)
         records_label.image = empty_photo
+        visible_record_indices = []
         return
 
-    # 只显示最近5条记录，去掉序号，只显示时间
-    recent_records = records[-5:]
-    records_text = "\n".join([format_time(t) for t in recent_records])
+    # 只显示最近5条记录，格式：时间 + 可选说明
+    total = len(records)
+    start_index = max(0, total - 5)
+    visible_record_indices = list(range(start_index, total))
+    recent_records = [records[i] for i in visible_record_indices]
+
+    lines = []
+    for rec in recent_records:
+        # 向后兼容旧结构：可能是 float
+        if isinstance(rec, dict):
+            t = rec.get("time", 0.0)
+            note = rec.get("note", "")
+        else:
+            t = float(rec)
+            note = ""
+        line = format_time(t)
+        if note:
+            line = f"{line}  {note}"
+        lines.append(line)
+    records_text = "\n".join(lines)
 
     record_font_size = int(DEFAULT_RECORD_FONT_SIZE * zoom_scale)
 
-    # 记录区域的宽度与主秒表保持一致
+    # 记录区域的宽度：取“主秒表固定宽度”和“记录自然宽度”的较大值，
+    # 这样既保证不截断长说明，又尽量与上方秒表对齐
     global fixed_width, fixed_height
     if fixed_width is None or fixed_height is None:
         recalc_main_fixed_size()
-    target_width = fixed_width
 
-    # 使用居中对齐，并指定目标宽度
+    # 先生成一张不限制宽度的临时图像，用于测量自然宽度
+    temp_img = create_text_image(records_text, font_size=record_font_size, align="left")
+    natural_width = temp_img.width
+    target_width = max(fixed_width, natural_width)
+
+    # 使用左对齐，并指定目标宽度（时间列从左侧整齐对齐）
     img = create_text_image(records_text, font_size=record_font_size,
-                            align="center", target_width=target_width)
+                            align="left", target_width=target_width)
     photo = ImageTk.PhotoImage(img)
     records_label.config(image=photo)
     records_label.image = photo  # 保持引用
@@ -532,6 +571,8 @@ def show_context_menu(event):
     context_menu.add_command(label="重置计时", command=reset_timer)
     context_menu.add_command(label="重置全部（含记录）", command=reset_all)
     context_menu.add_separator()
+    context_menu.add_command(label="为最近一次记录添加说明", command=add_record_note)
+    context_menu.add_separator()
     context_menu.add_command(label="退出", command=on_exit)
 
     try:
@@ -559,6 +600,72 @@ def stop_drag(event):
     save_config(x=root.winfo_x(), y=root.winfo_y())
     # 拖拽结束后补一次重绘，保证显示最新时间
     update_label()
+
+
+def _edit_record_note_by_index(index: int):
+    """按下标为指定记录添加/编辑文字说明"""
+    try:
+        global records
+        if not records or index < 0 or index >= len(records):
+            return
+
+        rec = records[index]
+        if isinstance(rec, dict):
+            current_note = rec.get("note", "")
+            t = rec.get("time", 0.0)
+        else:
+            # 兼容旧结构：只有时间
+            current_note = ""
+            t = float(rec)
+            # 升级为新结构
+            rec = {"time": t, "note": current_note}
+            records[index] = rec
+
+        # 弹出输入框，让用户填写说明
+        prompt_title = "记录说明"
+        prompt_text = f"为该记录添加说明（时间：{format_time(t)}）："
+        note = simpledialog.askstring(prompt_title, prompt_text, initialvalue=current_note)
+        if note is None:
+            return  # 用户取消
+
+        rec["note"] = note.strip()
+        # 更新显示
+        root.after(0, update_records_display)
+    except Exception as e:
+        print(f"Error in add_record_note: {e}")
+
+
+def add_record_note():
+    """为最近一次记录添加/编辑文字说明（F7 / 右键菜单使用）"""
+    if not records:
+        return
+    _edit_record_note_by_index(len(records) - 1)
+
+
+def on_records_right_click(event):
+    """在记录区域右键：为鼠标所在行的那条记录添加/编辑说明"""
+    try:
+        global visible_record_indices
+        if not visible_record_indices:
+            return
+
+        # 根据 y 坐标粗略判断是第几行
+        height = records_label.winfo_height()
+        line_count = len(visible_record_indices)
+        if height <= 0 or line_count <= 0:
+            return
+
+        per_line = height / line_count
+        idx = int(event.y / per_line)
+        if idx < 0:
+            idx = 0
+        if idx >= line_count:
+            idx = line_count - 1
+
+        record_global_index = visible_record_indices[idx]
+        _edit_record_note_by_index(record_global_index)
+    except Exception as e:
+        print(f"Error in on_records_right_click: {e}")
 
 # ======================
 # 键盘监听
@@ -624,6 +731,7 @@ def keyboard_listener():
             keyboard.add_hotkey(HOTKEY_TOGGLE, toggle_timer)
             keyboard.add_hotkey(HOTKEY_RESET, handle_f11_press)  # F11：单击重置秒表，双击重置全部
             keyboard.add_hotkey(HOTKEY_RECORD, handle_f10_press)  # F10：单击记录时间，双击显示/隐藏HUD
+            keyboard.add_hotkey(HOTKEY_EDIT_NOTE, lambda: root.after(0, add_record_note))  # F7：为最近一次记录添加说明
             keyboard.add_hotkey(HOTKEY_ZOOM_IN, zoom_in)
             keyboard.add_hotkey(HOTKEY_ZOOM_OUT, zoom_out)
 
@@ -763,7 +871,8 @@ label.bind("<Button-3>", show_context_menu)  # 右键菜单
 records_label.bind("<Button-1>", start_drag)
 records_label.bind("<B1-Motion>", on_drag)
 records_label.bind("<ButtonRelease-1>", stop_drag)
-records_label.bind("<Button-3>", show_context_menu)  # 右键菜单
+# 在记录区域右键：直接对该行记录添加/编辑说明
+records_label.bind("<Button-3>", on_records_right_click)
 
 # 启动时显示
 root.deiconify()
