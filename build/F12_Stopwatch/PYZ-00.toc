@@ -1,4 +1,4 @@
-('C:\\Users\\zhouhuiyuan\\Desktop\\MiaoBiao\\build\\F12_Stopwatch\\PYZ-00.pyz',
+('c:\\Users\\zhouhuiyuan\\Desktop\\MiaoBiao\\build\\F12_Stopwatch\\PYZ-00.pyz',
  [('PIL', 'C:\\Python314\\Lib\\site-packages\\PIL\\__init__.py', 'PYMODULE'),
   ('PIL.AvifImagePlugin',
    'C:\\Python314\\Lib\\site-packages\\PIL\\AvifImagePlugin.py',

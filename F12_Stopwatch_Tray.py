@@ -35,6 +35,17 @@ records = []  # 记录的时间列表
 hud_visible = True   # 启动时默认显示
 zoom_scale = 1.0     # 缩放比例，默认1.0，范围0.5-2.0
 
+# 主秒表显示缓存，减少重复计算和重绘
+fixed_width = None
+fixed_height = None
+last_display_text = None
+
+# 圆角背景缓存：key = (width, height, radius, fill)
+bg_cache = {}
+
+# 是否正在拖拽 HUD，用于在拖拽时减轻重绘负担
+is_dragging = False
+
 # ======================
 # 配置读写
 # ======================
@@ -75,13 +86,19 @@ zoom_scale = config.get("zoom_scale", 1.0)  # 从配置加载缩放比例
 
 
 def toggle_timer():
-    global running, start_time, elapsed
-    if not running:
-        start_time = time.time() - elapsed
-        running = True
-    else:
-        elapsed = time.time() - start_time
-        running = False
+    try:
+        global running, start_time, elapsed, last_display_text
+        if not running:
+            start_time = time.time() - elapsed
+            running = True
+        else:
+            elapsed = time.time() - start_time
+            running = False
+        # 状态切换时重置缓存，触发一次更新
+        last_display_text = None
+        root.after(0, update_label)
+    except Exception as e:
+        print(f"Error in toggle_timer: {e}")
 
 
 def record_lap():
@@ -92,50 +109,83 @@ def record_lap():
 
 def record_time():
     """记录当前时间"""
-    global records
-    records.append(elapsed)
-    # 使用 root.after 确保在主线程中更新 UI
-    root.after(0, update_records_display)
+    try:
+        global records
+        records.append(elapsed)
+        # 使用 root.after 确保在主线程中更新 UI
+        root.after(0, update_records_display)
+    except Exception as e:
+        print(f"Error in record_time: {e}")
 
 
 def reset_timer():
     """只重置秒表时间，不清除记录"""
-    global running, elapsed, start_time, laps
-    running = False
-    elapsed = 0.0
-    laps.clear()
-    start_time = time.time()
-    # 使用 root.after 确保在主线程中更新 UI
-    root.after(0, update_label)
+    try:
+        global running, elapsed, start_time, laps
+        running = False
+        elapsed = 0.0
+        laps.clear()
+        start_time = time.time()
+        # 使用 root.after 确保在主线程中更新 UI
+        root.after(0, update_label)
+    except Exception as e:
+        print(f"Error in reset_timer: {e}")
 
 def zoom_in():
     """放大界面"""
-    global zoom_scale
-    zoom_scale = min(zoom_scale + 0.1, 2.0)  # 最大2倍
-    save_config(zoom_scale=zoom_scale)
-    root.after(0, update_label)
-    root.after(0, update_records_display)
+    try:
+        global zoom_scale, fixed_width, fixed_height, last_display_text
+        zoom_scale = min(zoom_scale + 0.1, 2.0)  # 最大2倍
+        save_config(zoom_scale=zoom_scale)
+        # 缩放改变后需要重新计算固定尺寸并强制重绘
+        fixed_width = None
+        fixed_height = None
+        last_display_text = None
+        root.after(0, update_label)
+        root.after(0, update_records_display)
+    except Exception as e:
+        print(f"Error in zoom_in: {e}")
 
 def zoom_out():
     """缩小界面"""
-    global zoom_scale
-    zoom_scale = max(zoom_scale - 0.1, 0.25)  # 最小0.25倍
-    save_config(zoom_scale=zoom_scale)
-    root.after(0, update_label)
-    root.after(0, update_records_display)
+    try:
+        global zoom_scale, fixed_width, fixed_height, last_display_text
+        zoom_scale = max(zoom_scale - 0.1, 0.25)  # 最小0.25倍
+        save_config(zoom_scale=zoom_scale)
+        # 缩放改变后需要重新计算固定尺寸并强制重绘
+        fixed_width = None
+        fixed_height = None
+        last_display_text = None
+        root.after(0, update_label)
+        root.after(0, update_records_display)
+    except Exception as e:
+        print(f"Error in zoom_out: {e}")
+
+
+def recalc_main_fixed_size():
+    """根据当前配置和缩放，重新计算主秒表固定宽高"""
+    global fixed_width, fixed_height
+    font_size = int(DEFAULT_FONT_SIZE * zoom_scale)
+    max_time_text = "99:59.999" if config.get("show_milliseconds", False) else "99:59"
+    max_img = create_text_image(max_time_text, font_size=font_size)
+    fixed_width = max_img.width
+    fixed_height = max_img.height
 
 
 def reset_all():
     """重置秒表时间 + 记录"""
-    global running, elapsed, start_time, laps, records
-    running = False
-    elapsed = 0.0
-    laps.clear()
-    records.clear()
-    start_time = time.time()
-    # 使用 root.after 确保在主线程中更新 UI
-    root.after(0, update_label)
-    root.after(0, update_records_display)
+    try:
+        global running, elapsed, start_time, laps, records
+        running = False
+        elapsed = 0.0
+        laps.clear()
+        records.clear()
+        start_time = time.time()
+        # 使用 root.after 确保在主线程中更新 UI
+        root.after(0, update_label)
+        root.after(0, update_records_display)
+    except Exception as e:
+        print(f"Error in reset_all: {e}")
 
 # ======================
 # HUD 显示
@@ -158,21 +208,26 @@ def draw_rounded_rectangle_smooth(xy, fill, radius=10):
     x1, y1, x2, y2 = xy
     width = x2 - x1 + 1
     height = y2 - y1 + 1
-    
+
+    # 先检查缓存，避免重复计算
+    key = (width, height, radius, tuple(fill))
+    if key in bg_cache:
+        return bg_cache[key]
+
     # 使用更高的超采样：6倍超采样以获得更平滑的效果
     scale = 6
     large_width = width * scale
     large_height = height * scale
     large_radius = radius * scale
-    
+
     # 创建高分辨率临时图像
     temp_img = Image.new("RGBA", (large_width, large_height), (0, 0, 0, 0))
     pixels = temp_img.load()
-    
+
     # 获取填充颜色
     r, g, b = fill[:3]
     alpha = fill[3] if len(fill) > 3 else 255
-    
+
     # 圆角中心坐标
     corners = [
         (large_radius, large_radius),  # 左上
@@ -180,17 +235,17 @@ def draw_rounded_rectangle_smooth(xy, fill, radius=10):
         (large_radius, large_height - large_radius),  # 左下
         (large_width - large_radius, large_height - large_radius)  # 右下
     ]
-    
+
     # 边缘过渡宽度（在超采样空间中，更宽的过渡区域）
     edge_width = 2.0 * scale  # 增加到2像素的过渡宽度
-    
+
     # 逐像素绘制，计算每个像素到圆角边界的距离
     for y in range(large_height):
         for x in range(large_width):
             # 检查是否在矩形主体内（不在圆角区域）
             in_rect = (x >= large_radius and x < large_width - large_radius) or \
                      (y >= large_radius and y < large_height - large_radius)
-            
+
             if in_rect:
                 # 在矩形主体内，完全不透明
                 pixels[x, y] = (r, g, b, alpha)
@@ -202,11 +257,11 @@ def draw_rounded_rectangle_smooth(xy, fill, radius=10):
                     dx = x - cx
                     dy = y - cy
                     dist = math.sqrt(dx*dx + dy*dy)
-                    
+
                     # 计算到圆角边界的距离
                     dist_to_edge = dist - large_radius
                     min_dist = min(min_dist, dist_to_edge)
-                
+
                 # 根据距离设置透明度（实现平滑过渡）
                 if min_dist <= 0:
                     # 在圆角内部，完全不透明
@@ -221,12 +276,14 @@ def draw_rounded_rectangle_smooth(xy, fill, radius=10):
                 else:
                     # 在圆角外部，完全透明
                     pixel_alpha = 0
-                
+
                 pixels[x, y] = (r, g, b, pixel_alpha)
-    
+
     # 缩放回原始尺寸（使用最高质量的LANCZOS重采样）
     final_img = temp_img.resize((width, height), Image.Resampling.LANCZOS)
-    
+
+    # 写入缓存
+    bg_cache[key] = final_img
     return final_img
 
 def create_text_image(text, font_size=48, align="left", target_width=None, target_height=None):
@@ -302,8 +359,13 @@ def create_text_image(text, font_size=48, align="left", target_width=None, targe
     radius = 8
     bg_color = (26, 26, 26, 255)
     
-    # 使用超采样绘制平滑的圆角矩形背景
-    bg_img = draw_rounded_rectangle_smooth((0, 0, img_width - 1, img_height - 1), fill=bg_color, radius=radius)
+    # 使用背景：拖拽时用简单矩形以提升性能，非拖拽时用圆角抗锯齿
+    if is_dragging:
+        # 简单矩形背景（无圆角），性能更好
+        bg_img = Image.new("RGBA", (img_width, img_height), bg_color)
+    else:
+        # 使用超采样绘制平滑的圆角矩形背景（带缓存）
+        bg_img = draw_rounded_rectangle_smooth((0, 0, img_width - 1, img_height - 1), fill=bg_color, radius=radius)
     
     # 创建主图像并粘贴背景
     img = Image.new("RGBA", (img_width, img_height), (0, 0, 0, 0))
@@ -352,20 +414,32 @@ def create_text_image(text, font_size=48, align="left", target_width=None, targe
 
 
 def update_label():
+    """更新主秒表显示，带缓存以减少重绘"""
+    global fixed_width, fixed_height, last_display_text
     text = format_time(elapsed)
+
+    # 如果显示内容没变且已有固定尺寸，直接返回，避免重复重绘
+    if text == last_display_text and fixed_width is not None and fixed_height is not None:
+        return
+
+    # 如有需要，重新计算固定宽高
+    if fixed_width is None or fixed_height is None:
+        recalc_main_fixed_size()
+
     font_size = int(DEFAULT_FONT_SIZE * zoom_scale)
-    
-    # 计算最大可能的时间（99:59 或 99:59.999），用于固定背景宽度和高度
-    max_time_text = "99:59.999" if config.get("show_milliseconds", False) else "99:59"
-    max_img = create_text_image(max_time_text, font_size=font_size)
-    fixed_width = max_img.width
-    fixed_height = max_img.height
-    
+
     # 使用固定宽度和高度创建图像，避免背景大小变化
-    img = create_text_image(text, font_size=font_size, target_width=fixed_width, target_height=fixed_height, align="center")
+    img = create_text_image(
+        text,
+        font_size=font_size,
+        target_width=fixed_width,
+        target_height=fixed_height,
+        align="center",
+    )
     photo = ImageTk.PhotoImage(img)
     label.config(image=photo)
     label.image = photo  # 保持引用
+    last_display_text = text
 
 
 def update_records_display():
@@ -383,12 +457,12 @@ def update_records_display():
     records_text = "\n".join([format_time(t) for t in recent_records])
 
     record_font_size = int(DEFAULT_RECORD_FONT_SIZE * zoom_scale)
-    
-    # 获取秒表时间的宽度，让记录时间使用相同的宽度以实现居中对齐
-    main_font_size = int(DEFAULT_FONT_SIZE * zoom_scale)
-    main_text = format_time(elapsed)
-    main_img = create_text_image(main_text, font_size=main_font_size)
-    target_width = main_img.width
+
+    # 记录区域的宽度与主秒表保持一致
+    global fixed_width, fixed_height
+    if fixed_width is None or fixed_height is None:
+        recalc_main_fixed_size()
+    target_width = fixed_width
     
     # 使用居中对齐，并指定目标宽度
     img = create_text_image(records_text, font_size=record_font_size, align="center", target_width=target_width)
@@ -401,8 +475,13 @@ def update_loop():
     global elapsed
     if running:
         elapsed = time.time() - start_time
+        # 拖拽时也保持更新显示（已通过缓存和优化降低重绘开销）
         update_label()
-    root.after(30, update_loop)
+    # 拖拽时降低更新频率到20fps（50ms），非拖拽时使用更高频率（30ms约33fps）
+    if is_dragging:
+        root.after(50, update_loop)  # 拖拽时20fps
+    else:
+        root.after(30, update_loop)  # 非拖拽时约33fps
 
 # ======================
 # HUD 显隐
@@ -410,12 +489,15 @@ def update_loop():
 
 
 def toggle_hud():
-    global hud_visible
-    hud_visible = not hud_visible
-    if hud_visible:
-        root.deiconify()
-    else:
-        root.withdraw()
+    try:
+        global hud_visible
+        hud_visible = not hud_visible
+        if hud_visible:
+            root.deiconify()
+        else:
+            root.withdraw()
+    except Exception as e:
+        print(f"Error in toggle_hud: {e}")
 
 # ======================
 # HUD 拖拽和右键菜单
@@ -443,6 +525,8 @@ def show_context_menu(event):
         context_menu.grab_release()
 
 def start_drag(event):
+    global is_dragging
+    is_dragging = True
     root._drag_x = event.x
     root._drag_y = event.y
 
@@ -454,7 +538,11 @@ def on_drag(event):
 
 
 def stop_drag(event):
+    global is_dragging
+    is_dragging = False
     save_config(x=root.winfo_x(), y=root.winfo_y())
+    # 拖拽结束后补一次重绘，保证显示最新时间
+    update_label()
 
 # ======================
 # 键盘监听
@@ -462,14 +550,27 @@ def stop_drag(event):
 
 
 def keyboard_listener():
-    keyboard.add_hotkey(HOTKEY_TOGGLE, toggle_timer)
-    keyboard.add_hotkey(HOTKEY_RESET, reset_timer)
-    keyboard.add_hotkey(HOTKEY_RECORD, record_time)
-    keyboard.add_hotkey(HOTKEY_RESET_ALL, reset_all)
-    keyboard.add_hotkey(HOTKEY_TOGGLE_HUD, toggle_hud)
-    keyboard.add_hotkey(HOTKEY_ZOOM_IN, zoom_in)
-    keyboard.add_hotkey(HOTKEY_ZOOM_OUT, zoom_out)
-    keyboard.wait()
+    """键盘监听器，带自动重启机制"""
+    while True:
+        try:
+            # 清除之前的热键（如果存在）
+            keyboard.unhook_all()
+            
+            # 重新注册所有热键
+            keyboard.add_hotkey(HOTKEY_TOGGLE, toggle_timer)
+            keyboard.add_hotkey(HOTKEY_RESET, reset_timer)
+            keyboard.add_hotkey(HOTKEY_RECORD, record_time)
+            keyboard.add_hotkey(HOTKEY_RESET_ALL, reset_all)
+            keyboard.add_hotkey(HOTKEY_TOGGLE_HUD, toggle_hud)
+            keyboard.add_hotkey(HOTKEY_ZOOM_IN, zoom_in)
+            keyboard.add_hotkey(HOTKEY_ZOOM_OUT, zoom_out)
+            
+            # 使用wait()阻塞，但如果出现问题会抛出异常
+            keyboard.wait()
+        except Exception as e:
+            print(f"Keyboard listener error: {e}, restarting...")
+            time.sleep(1)  # 等待1秒后重启
+            # 循环继续，重新注册热键
 
 # ======================
 # 托盘
@@ -477,9 +578,13 @@ def keyboard_listener():
 
 
 def toggle_time_format():
-    global config
+    global config, fixed_width, fixed_height, last_display_text
     config["show_milliseconds"] = not config.get("show_milliseconds", False)
     save_config(show_milliseconds=config["show_milliseconds"])
+    # 显示格式改变会影响最大宽度，重置缓存
+    fixed_width = None
+    fixed_height = None
+    last_display_text = None
     update_label()
     # 更新托盘菜单
     update_tray_menu()
