@@ -564,14 +564,15 @@ def show_context_menu(event):
     format_text = "显示毫秒" if not config.get(
         "show_milliseconds", False) else "隐藏毫秒"
 
-    context_menu.add_command(label="显示 / 隐藏 HUD", command=toggle_hud)
+    # 使用用户要求的格式：功能名称（快捷键）
+    context_menu.add_command(label="显示 / 隐藏 HUD（双击F10）", command=toggle_hud)
     context_menu.add_separator()
     context_menu.add_command(label=format_text, command=toggle_time_format)
     context_menu.add_separator()
-    context_menu.add_command(label="重置计时", command=reset_timer)
-    context_menu.add_command(label="重置全部（含记录）", command=reset_all)
+    context_menu.add_command(label="重置计时（单击F11）", command=reset_timer)
+    context_menu.add_command(label="重置全部（含记录）（双击F11）", command=reset_all)
     context_menu.add_separator()
-    context_menu.add_command(label="为最近一次记录添加说明", command=add_record_note)
+    context_menu.add_command(label="为最近一次记录添加说明（F7）", command=add_record_note)
     context_menu.add_separator()
     context_menu.add_command(label="退出", command=on_exit)
 
