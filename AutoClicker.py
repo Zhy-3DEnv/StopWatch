@@ -67,6 +67,7 @@ config = load_config()
 click_interval = config.get("interval", 1.0)
 click_x = config.get("x", 0)
 click_y = config.get("y", 0)
+use_current_position = config.get("use_current_position", False)
 
 # ======================
 # 自动点击逻辑
@@ -97,8 +98,26 @@ def start_clicking():
     
     if is_clicking:
         return
-    
-    # 检查坐标是否有效
+
+    # 如果勾选“使用当前鼠标位置”，在开始前抓取一次当前坐标
+    try:
+        if 'use_current_position_var' in globals() and use_current_position_var.get():
+            mouse_controller = mouse.Controller()
+            current_x, current_y = mouse_controller.position
+            click_x = int(current_x)
+            click_y = int(current_y)
+            # 同步到界面与配置
+            if 'x_var' in globals():
+                x_var.set(str(click_x))
+            if 'y_var' in globals():
+                y_var.set(str(click_y))
+            save_config(x=click_x, y=click_y, use_current_position=True)
+        else:
+            save_config(use_current_position=False)
+    except Exception as e:
+        print(f"Error getting current mouse position: {e}")
+
+    # 检查坐标是否有效（无论来源是捕获还是当前鼠标）
     if click_x < 0 or click_y < 0:
         try:
             messagebox.showwarning("警告", "请先设置点击位置！")
@@ -253,6 +272,14 @@ def on_y_change(*args):
         if value >= 0:
             click_y = value
             save_config(y=value)
+    except:
+        pass
+
+
+def on_use_current_change():
+    """切换是否使用当前鼠标位置"""
+    try:
+        save_config(use_current_position=use_current_position_var.get())
     except:
         pass
 
@@ -449,7 +476,7 @@ def update_tray_menu():
 
 root = tk.Tk()
 root.title("鼠标自动点击工具")
-root.geometry(f"400x380+{config.get('window_x', 600)}+{config.get('window_y', 300)}")
+root.geometry(f"400x410+{config.get('window_x', 600)}+{config.get('window_y', 300)}")
 root.resizable(False, False)
 
 # 设置窗口关闭事件
@@ -506,6 +533,18 @@ y_var = tk.StringVar(value=str(click_y))
 y_var.trace("w", on_y_change)
 y_entry = ttk.Entry(y_frame, textvariable=y_var, width=15)
 y_entry.pack(side=tk.LEFT, padx=5)
+
+# 使用当前鼠标位置选项
+use_current_position_var = tk.BooleanVar(value=use_current_position)
+use_current_check = tk.Checkbutton(
+    main_frame,
+    text="使用当前鼠标位置（按 F9 开始时生效）",
+    variable=use_current_position_var,
+    command=on_use_current_change,
+    anchor="w",
+    justify="left"
+)
+use_current_check.pack(fill=tk.X, pady=(5, 5))
 
 # 捕获位置按钮
 capture_btn = ttk.Button(

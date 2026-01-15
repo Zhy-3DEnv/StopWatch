@@ -1,7 +1,8 @@
 {
   "interval": 2.0,
-  "x": 718,
-  "y": 199,
+  "x": 2649,
+  "y": 59,
   "window_x": 1693,
-  "window_y": 306
+  "window_y": 306,
+  "use_current_position": true
 }
