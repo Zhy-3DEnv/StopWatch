@@ -644,7 +644,7 @@ def add_record_note():
 
 
 def on_records_right_click(event):
-    """在记录区域右键：为鼠标所在行的那条记录添加/编辑说明"""
+    """在记录区域右键：为鼠标所在行的那条记录添加/编辑说明（Alt+右键）"""
     try:
         global visible_record_indices
         if not visible_record_indices:
@@ -667,6 +667,17 @@ def on_records_right_click(event):
         _edit_record_note_by_index(record_global_index)
     except Exception as e:
         print(f"Error in on_records_right_click: {e}")
+
+
+def on_records_right_click_handler(event):
+    """处理记录区域的右键事件：Alt+右键编辑，普通右键显示菜单"""
+    # 检查是否按下了 Alt 键（state 中的 0x20000 位表示 Alt）
+    if event.state & 0x20000:  # Alt 键被按下
+        # Alt + 右键：编辑记录说明
+        on_records_right_click(event)
+    else:
+        # 普通右键：显示右键菜单
+        show_context_menu(event)
 
 # ======================
 # 键盘监听
@@ -872,8 +883,8 @@ label.bind("<Button-3>", show_context_menu)  # 右键菜单
 records_label.bind("<Button-1>", start_drag)
 records_label.bind("<B1-Motion>", on_drag)
 records_label.bind("<ButtonRelease-1>", stop_drag)
-# 在记录区域右键：直接对该行记录添加/编辑说明
-records_label.bind("<Button-3>", on_records_right_click)
+# 在记录区域右键：Alt+右键编辑记录说明，普通右键显示菜单
+records_label.bind("<Button-3>", on_records_right_click_handler)
 
 # 启动时显示
 root.deiconify()
