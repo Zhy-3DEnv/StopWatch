@@ -20,9 +20,9 @@ HOTKEY_EDIT_NOTE = "F7"      # 为最近一次记录添加/编辑说明
 HOTKEY_ZOOM_OUT = "-"        # 缩小界面
 HOTKEY_ZOOM_IN = "plus"      # 放大界面（+键）
 
-# 默认字体大小
-DEFAULT_FONT_SIZE = 48
-DEFAULT_RECORD_FONT_SIZE = 36
+# 默认字体大小（已调整为原来的50%）
+DEFAULT_FONT_SIZE = 24  # 原来48，现在24（50%）
+DEFAULT_RECORD_FONT_SIZE = 18  # 原来36，现在18（50%）
 
 # ======================
 # 状态
@@ -142,11 +142,26 @@ def reset_timer():
         print(f"Error in reset_timer: {e}")
 
 
+def show_zoom_percentage():
+    """显示缩放百分比（相对于默认大小），2秒后自动隐藏"""
+    try:
+        global zoom_label
+        # 相对于默认大小（1.0）的百分比
+        percentage = int(zoom_scale * 100)
+        zoom_label.config(text=f"{percentage}%", fg="#00FFAA")
+        zoom_label.pack(pady=(5, 0))
+        
+        # 2秒后隐藏
+        root.after(2000, lambda: zoom_label.pack_forget())
+    except Exception as e:
+        print(f"Error in show_zoom_percentage: {e}")
+
+
 def zoom_in():
-    """放大界面"""
+    """放大界面（每次增加5%）"""
     try:
         global zoom_scale, fixed_width, fixed_height, last_display_text
-        zoom_scale = min(zoom_scale + 0.1, 2.0)  # 最大2倍
+        zoom_scale = min(zoom_scale + 0.05, 2.0)  # 每次增加5%，最大2倍（200%）
         save_config(zoom_scale=zoom_scale)
         # 缩放改变后需要重新计算固定尺寸并强制重绘
         fixed_width = None
@@ -154,15 +169,16 @@ def zoom_in():
         last_display_text = None
         root.after(0, update_label)
         root.after(0, update_records_display)
+        root.after(0, show_zoom_percentage)
     except Exception as e:
         print(f"Error in zoom_in: {e}")
 
 
 def zoom_out():
-    """缩小界面"""
+    """缩小界面（每次减少5%）"""
     try:
         global zoom_scale, fixed_width, fixed_height, last_display_text
-        zoom_scale = max(zoom_scale - 0.1, 0.25)  # 最小0.25倍
+        zoom_scale = max(zoom_scale - 0.05, 0.25)  # 每次减少5%，最小0.25倍（25%）
         save_config(zoom_scale=zoom_scale)
         # 缩放改变后需要重新计算固定尺寸并强制重绘
         fixed_width = None
@@ -170,6 +186,7 @@ def zoom_out():
         last_display_text = None
         root.after(0, update_label)
         root.after(0, update_records_display)
+        root.after(0, show_zoom_percentage)
     except Exception as e:
         print(f"Error in zoom_out: {e}")
 
@@ -556,6 +573,25 @@ def toggle_hud():
 # ======================
 
 
+def reset_to_default_settings():
+    """恢复默认设置"""
+    try:
+        global zoom_scale, fixed_width, fixed_height, last_display_text, config
+        # 恢复缩放比例到 1.0（100%）
+        zoom_scale = 1.0
+        save_config(zoom_scale=zoom_scale)
+        # 重置缓存，强制重绘
+        fixed_width = None
+        fixed_height = None
+        last_display_text = None
+        root.after(0, update_label)
+        root.after(0, update_records_display)
+        # 显示恢复提示
+        root.after(0, show_zoom_percentage)
+    except Exception as e:
+        print(f"Error in reset_to_default_settings: {e}")
+
+
 def show_context_menu(event):
     """显示右键菜单"""
     context_menu = tk.Menu(root, tearoff=0, bg="#2a2a2a", fg="#ffffff",
@@ -573,6 +609,8 @@ def show_context_menu(event):
     context_menu.add_command(label="重置全部（含记录）（双击F11）", command=reset_all)
     context_menu.add_separator()
     context_menu.add_command(label="为最近一次记录添加说明（F7）", command=add_record_note)
+    context_menu.add_separator()
+    context_menu.add_command(label="恢复默认设置", command=reset_to_default_settings)
     context_menu.add_separator()
     context_menu.add_command(label="退出", command=on_exit)
 
@@ -858,6 +896,21 @@ label = tk.Label(
 )
 label.image = initial_photo  # 保持引用
 label.pack(padx=0, pady=(0, 8), anchor="w")  # 左对齐，底部间距8像素
+
+# 创建缩放百分比显示标签（初始隐藏）
+zoom_label = tk.Label(
+    main_frame,
+    text="",
+    bg="black",
+    fg="#00FFAA",
+    font=("Microsoft YaHei", 12, "bold"),
+    bd=0,
+    padx=0,
+    pady=0,
+    highlightthickness=0,
+    anchor="w"  # 左对齐
+)
+# 初始不显示，等待缩放操作时显示
 
 # 创建记录显示标签
 records_label = tk.Label(
